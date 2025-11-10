@@ -3,4 +3,5 @@ uvicorn
 openai
 python-multipart
 pillow
+pydantic
 python-dotenv
