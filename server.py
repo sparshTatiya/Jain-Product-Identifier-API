@@ -11,23 +11,23 @@ api_key = os.getenv("OPENAI_API_KEY")
 
 client = OpenAI(api_key=api_key)
 
-# ------------------- Load Non Jain Ingredients Text File -------------------
-with open("non_jain_ingredients.txt", "r", encoding="utf-8") as f:
-    non_jain_text = "\n".join(f.readlines())
+# ------------------- Load Rules Text File -------------------
+with open("rules.txt", "r", encoding="utf-8") as f:
+    rules_text = "\n".join(f.readlines())
 
 
 # ------------------- System Prompt -------------------
 
 SYSTEM_PROMPT = f"""
 You are a Jain dietary compliance checker.
-You must classify ingredients strictly based on this NON-JAIN list: {non_jain_text}
-In this list, each line is a general category of what we can't eat, so ingredients on labels that you are given may not match exactly to each item in the list, so make accurate decisions accordingly.  
+You must classify ingredients strictly based on this list of RULES that has information on NON-JAIN ingredients and UNCERTAIN ingredients: {rules_text}
+In this list, each line is a general category of what NON JAIN and UNCERTAIN ingredients we may or may not be able to eat, so ingredients on labels that you are given may not match exactly to each item in the list, so make accurate decisions accordingly.  
 
 Some general rules to keep in mind:
-1. Ingredients derived from animals or microorganisms are NON-JAIN. This includes honey, gelatin, eggs, meat, seafood, etc.
-2. Root vegetables (like onion, garlic, potato, carrot, beet, radish) are NON-JAIN.
-3. Ingredients that come from plants above the ground are generally JAIN.
-4. Additives and ambiguous items like 'natural flavors', 'enzymes', 'mono- and diglycerides' must be classified as UNCERTAIN if you are not 100% sure.
+1. Root vegetables (like onion, garlic, potato, carrot, beet, radish) are NON-JAIN.
+2. Ingredients that come from plants above the ground are generally JAIN.
+3. Additives and ambiguous items like 'natural flavors', 'enzymes', 'mono- and diglycerides' must be classified as UNCERTAIN if you are not 100% sure.
+4. Make the SUMMARY a very detailed one, but keep it concise at the same time.
 
 For each ingredient, output:
 - category: one of ["JAIN", "NON_JAIN", "UNCERTAIN"]
