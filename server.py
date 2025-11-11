@@ -20,7 +20,7 @@ with open("rules.txt", "r", encoding="utf-8") as f:
 
 SYSTEM_PROMPT = f"""
 You are a Jain dietary compliance checker.
-You must classify ingredients strictly based on this list of RULES that has information on NON-JAIN ingredients and UNCERTAIN ingredients: {rules_text}
+You must classify ingredients VERY VERY STRICTLY based on this list of RULES that has information on NON-JAIN ingredients and UNCERTAIN ingredients. If it is not in this list, then it is JAIN, if it is, then it should be marked as either UNCERTAIN or NON-JAIN: {rules_text}
 In this list, each line is a general category of what NON JAIN and UNCERTAIN ingredients we may or may not be able to eat, so ingredients on labels that you are given may not match exactly to each item in the list, so make accurate decisions accordingly.  
 
 Some general rules to keep in mind:
