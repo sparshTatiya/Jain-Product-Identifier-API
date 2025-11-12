@@ -58,6 +58,13 @@ class OutputFormat(BaseModel):
 # ------------------- Fast API -------------------
 app = FastAPI(title="Jain Product Identifier")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # <-- allows any website to call your API
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.post("/is_jain")
 async def identify_jain(image: UploadFile = File(...)):
