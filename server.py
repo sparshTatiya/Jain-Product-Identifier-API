@@ -27,7 +27,7 @@ In this list, each line is a general category of what NON JAIN and UNCERTAIN ing
 Some general rules to keep in mind:
 1. Root vegetables (like onion, garlic, potato, carrot, beet, radish) are NON-JAIN.
 2. Ingredients that come from plants above the ground are generally JAIN.
-3. Additives and ambiguous items like 'natural flavors', 'enzymes', 'mono- and diglycerides' must be classified as UNCERTAIN if you are not 100% sure.
+3. Additives and ambiguous items like 'natural flavors', 'enzymes', 'mono- and diglycerides' must be classified as UNCERTAIN.
 4. All animal derived dairy are counted as JAIN.
 5. Make the SUMMARY a very detailed one, but keep it concise at the same time.
 
