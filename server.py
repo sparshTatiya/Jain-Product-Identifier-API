@@ -1,89 +1,158 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from openai import OpenAI
-from pydantic import BaseModel
-from typing import List, Optional
 import base64
 import os
+import re
+import asyncio
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from typing import List, Optional
 from dotenv import load_dotenv
+from openai import OpenAI
+from pydantic import BaseModel
+
+# ------------------- ENV + CLIENT -------------------
 
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 
 client = OpenAI(api_key=api_key)
 
-# ------------------- Load Rules Text File -------------------
-with open("rules.txt", "r", encoding="utf-8") as f:
-    rules_text = "\n".join(f.readlines())
+app = FastAPI()
 
+chunk_size_num = 7
 
-# ------------------- System Prompt -------------------
+# ------------------- PROMPTS -------------------
 
-SYSTEM_PROMPT = f"""
-You are a Jain dietary compliance checker.
-You must classify ingredients VERY VERY STRICTLY based on this list of RULES that has information on NON-JAIN ingredients and UNCERTAIN ingredients. If it is not in this list, then it is JAIN, if it is, then it should be marked as either UNCERTAIN or NON-JAIN: {rules_text}
-In this list, each line is a general category of what NON JAIN and UNCERTAIN ingredients we may or may not be able to eat, so ingredients on labels that you are given may not match exactly to each item in the list, so make accurate decisions accordingly.  
+SYSTEM_PROMPT_EXTRACTOR = """
+You are an OCR extractor for ingredient labels.
 
-Some general rules to keep in mind:
-1. Root vegetables (like onion, garlic, potato, carrot, beet, radish) are NON-JAIN.
-2. Ingredients that come from plants above the ground are generally JAIN.
-3. Additives and ambiguous items like 'natural flavors', 'enzymes', 'mono- and diglycerides' must be classified as UNCERTAIN.
-4. All animal derived dairy are counted as JAIN.
-5. Make the SUMMARY a very detailed one, but keep it concise at the same time.
-
-For each ingredient, output:
-- category: one of ["JAIN", "NON_JAIN", "UNCERTAIN"]
-- reason: short explanation (only if non_jain or uncertain)
+Task:
+- Return ONLY valid ingredient names as a JSON array.
+- Split ingredients at top-level commas (commas inside parentheses/brackets do NOT split the top-level ingredient).
+- If an ingredient contains parentheses or brackets listing sub-ingredients (e.g. "Seasoning (salt, sugar)"),
+  include BOTH the outer ingredient and each sub-ingredient as separate list items.
+- Do NOT combine multiple ingredients into a single string.
+- Do NOT include quantities, sizes, or packaging text.
+- If the image is NOT an ingredient label, return:
+  {
+    "ingredients": [],
+    "is_valid": false,
+    "note": "short explanation"
+  }
+Otherwise return:
+  {
+    "ingredients": ["one item", "another item", ...],
+    "is_valid": true
+  }
+Only return JSON exactly in that shape.
 """
 
+SYSTEM_PROMPT_CLASSIFIER = """
+You are a STRICT Jain dietary classifier following THESE SPECIFIC RULES:
 
-# ------------------- Format -------------------
-class IngredientResult(BaseModel):
-    name: str
+### Allowed (JAIN)
+- All dairy products even if animal-derived.
+- All above-ground plant ingredients.
+- Plant oils, grains, legumes, seeds, nuts.
+- Spices.
+- Synthetics if non-animal.
+
+### Not Allowed (NON_JAIN)
+- Root vegetables.
+- Eggs.
+- Meat, seafood.
+- Honey.
+- Insect-derived ingredients (shellac, cochineal, beeswax).
+- Gelatin, animal rennet, broths.
+
+### Uncertain (UNCERTAIN)
+- Natural/artificial flavors without clarification.
+- Enzymes unless microbial.
+- Any ambiguous ingredient.
+
+Return JSON:
+{
+  "results": [
+    {
+      "ingredient": "<name>",
+      "category": "JAIN | NON_JAIN | UNCERTAIN",
+      "reason": "<short reason or null>"
+    }
+  ]
+}
+"""
+
+# ------------------- SCHEMAS -------------------
+
+class ExtractOutput(BaseModel):
+    ingredients: List[str]
+    is_valid: bool
+    note: Optional[str] = None
+
+
+class SingleIngredientOutput(BaseModel):
+    ingredient: str
+    category: str
     reason: Optional[str] = None
 
 
-class Summary(BaseModel):
-    overall_jain_safe: bool
-    non_jain_ingredients_found: List[str]
-    note: Optional[str] = None  # For fallback case
+class GroupClassificationOutput(BaseModel):
+    results: List[SingleIngredientOutput]
 
 
-class OutputFormat(BaseModel):
-    non_jain_ingredients: List[IngredientResult]
-    uncertain_ingredients: List[IngredientResult]
-    jain_ingredients: List[IngredientResult]
-    summary: Summary
+# ------------------- HELPERS -------------------
+
+def normalize_name(s: str) -> str:
+    s = s.strip()
+    if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+        s = s[1:-1].strip()
+    return s.strip(",.; ")
 
 
-# ------------------- Fast API -------------------
-app = FastAPI(title="Jain Product Identifier")
+def chunk_list(items, chunk_size):
+    for i in range(0, len(items), chunk_size):
+        yield items[i: i + chunk_size]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # <-- allows any website to call your API
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+async def classify_group(ingredients: List[str]):
+    resp = client.responses.parse(
+        model="gpt-4.1-mini",
+        input=[
+            {"role": "system", "content": SYSTEM_PROMPT_CLASSIFIER},
+            {"role": "user", "content": f"Classify these ingredients: {ingredients}"},
+        ],
+        text_format=GroupClassificationOutput,
+    )
+    return resp.output_parsed.model_dump()["results"]
+
+
+async def classify_all(ingredients: List[str]):
+    tasks = [
+        classify_group(group)
+        for group in chunk_list(ingredients, chunk_size_num)
+    ]
+    results_all = await asyncio.gather(*tasks)
+    flat = []
+    for r in results_all:
+        flat.extend(r)
+    return flat
+
+
+# ------------------- FASTAPI ROUTE -------------------
 
 @app.post("/is_jain")
-async def identify_jain(image: UploadFile = File(...)):
+async def classify_ingredients_from_image(file: UploadFile = File(...)):
+    # ---- Load image ----
+    img_bytes = await file.read()
+    base64_image = base64.b64encode(img_bytes).decode("utf-8")
 
-    image_bytes = await image.read()
-    base64_image = base64.b64encode(image_bytes).decode("utf-8")
-
-    response = client.responses.parse(
-        model="gpt-4o",
+    # ---- Model extraction ----
+    extract_response = client.responses.parse(
+        model="gpt-4.1",
         input=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": SYSTEM_PROMPT_EXTRACTOR},
             {
                 "role": "user",
                 "content": [
-                    {
-                        "type": "input_text",
-                        "text": "Analyze the ingredients in the following ingredient label image.",
-                    },
+                    {"type": "input_text", "text": "Extract ingredients from this label."},
                     {
                         "type": "input_image",
                         "image_url": f"data:image/jpeg;base64,{base64_image}",
@@ -91,9 +160,65 @@ async def identify_jain(image: UploadFile = File(...)):
                 ],
             },
         ],
-        text_format=OutputFormat,
+        text_format=ExtractOutput,
     )
 
-    response = response.output_parsed.model_dump()
+    extract_data = extract_response.output_parsed.model_dump()
 
-    return response
+    if not extract_data["is_valid"]:
+        raise HTTPException(status_code=400, detail=extract_data.get("note", "Invalid label"))
+
+    # ---- Cleaning ----
+    model_items = extract_data["ingredients"]
+
+    cleaned = []
+    for it in model_items:
+        splits = re.split(r"\s+(?:and|or)\s+|\/", it)
+        for s in splits:
+            s_clean = normalize_name(s)
+            if s_clean:
+                cleaned.append(s_clean)
+
+    seen = set()
+    display_to_classify = []
+    for r in cleaned:
+        key = r.lower()
+        if key not in seen:
+            seen.add(key)
+            display_to_classify.append(r)
+
+    # ---- Classification ----
+    classified_results = await classify_all(display_to_classify)
+
+    # ---- Group final output ----
+    jain = []
+    non_jain = []
+    uncertain = []
+
+    for item in classified_results:
+        ing = item["ingredient"]
+        cat = item["category"]
+        reason = item.get("reason")
+
+        # match original formatting
+        matched = next((d for d in display_to_classify if d.lower() == ing.lower()), ing)
+
+        if cat == "JAIN":
+            jain.append({"name": matched})
+        elif cat == "NON_JAIN":
+            non_jain.append({"name": matched, "reason": reason})
+        else:
+            uncertain.append({"name": matched, "reason": reason})
+
+    final_output = {
+        "jain_ingredients": jain,
+        "non_jain_ingredients": non_jain,
+        "uncertain_ingredients": uncertain,
+        "summary": {
+            "overall_jain_safe": len(non_jain) == 0,
+            "non_jain_ingredients_found": [x["name"] for x in non_jain],
+        },
+    }
+
+    return final_output
+
