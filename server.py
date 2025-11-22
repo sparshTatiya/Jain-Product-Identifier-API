@@ -27,7 +27,7 @@ app.add_middleware(
 )
 
 
-chunk_size_num = 5
+chunk_size_num = 7
 
 # ------------------- PROMPTS -------------------
 
