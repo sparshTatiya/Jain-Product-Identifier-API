@@ -6,6 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 from pydantic import BaseModel
 from openai import OpenAI
+from dotenv import load_dotenv
+import os
 
 # ------------------- INIT -------------------
 load_dotenv()
