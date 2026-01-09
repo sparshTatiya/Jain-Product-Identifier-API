@@ -13,6 +13,7 @@ import os
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 
+
 app = FastAPI(title="Jain Ingredient Classifier API")
 
 app.add_middleware(
@@ -159,6 +160,10 @@ async def classify_all(ingredients: List[str]):
 
 
 # ------------------- API ENDPOINT -------------------
+@app.get("/ping")
+async def ping():
+    return {"status": "ok"}
+
 
 @app.post("/classify")
 async def classify_label(file: UploadFile = File(...)):
